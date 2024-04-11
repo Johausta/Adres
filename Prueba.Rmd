@@ -1,0 +1,443 @@
+---
+title: "Prueba Adres"
+author: "Johader Guillermo Cuellar"
+date: "2024-04-10"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,echo=FALSE, include=FALSE}
+# Cargue de librerias a utilizar en R studio.
+
+library(RSQLite)
+library(readr)
+library(dplyr)
+library(data.table)
+library(lubridate)
+library(zoo)
+library(pander)
+library(ggplot2)
+library(RColorBrewer)
+library(tidyverse)
+library(corrplot)
+library(stats)
+library(Amelia)
+library(tidyr)
+library(writexl)
+library(mice)
+library(gdata)
+library(readxl)
+library(MASS)
+library(stringr)
+```
+
+
+
+
+
+```{r, echo=FALSE, include=FALSE}
+# Cargue de datos Municipios y conección a sqlite
+# Conectar a la base de datos SQLite
+
+con <- dbConnect(SQLite(), "Municipios.db")
+
+# Lee los datos del archivo Excel
+Municipios <-  data.frame(read_excel("E:/Historico/Certificados y Procesos de empleo/PRUEBAS/Adres/Municipios.xlsx")) 
+
+# Conecta a la base de datos SQLite
+con <- dbConnect(RSQLite::SQLite(), dbname = "E:/Historico/Certificados y Procesos de empleo/PRUEBAS/Adres/Municipios.db")
+
+
+# Escribe los datos en la tabla de la base de datos SQLite
+dbWriteTable(con, "Municipios",Municipios)
+
+
+
+```
+
+
+
+```{r,echo=FALSE, include=FALSE}
+# Cargue de datos prestadores y conección a sqlite
+# Conectar a la base de datos SQLite
+conP <- dbConnect(SQLite(), "Prestadores.db")
+
+# Lee los datos del archivo Excel
+Prestadores <-  data.frame(read_xlsx("E:/Historico/Certificados y Procesos de empleo/PRUEBAS/Adres/Prestadores.xlsx"))
+
+# Conecta a la base de datos SQLite
+conP <- dbConnect(RSQLite::SQLite(), dbname = "E:/Historico/Certificados y Procesos de empleo/PRUEBAS/Adres/Prestadores.db")
+
+
+# Escribe los datos en la tabla de la base de datos SQLite
+dbWriteTable(conP, "Prestadores",Prestadores)
+
+#dbDisconnect(conP)
+```
+
+
+
+
+## Análisis de datos base de información Municipios.
+
+\n
+\n
+\n
+
+```{r,echo=FALSE}
+
+# Limpieza de la bariable de departamento y municipio eliminando caracteres especiales.
+
+Departamentos <- dbGetQuery(con, "SELECT  REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(Departamento, '*', ''), '/', ''), '%', ''), '<', ''), '>', ''),'U','u'),'  ','') AS Departamento FROM Municipios")
+
+Municipio <- dbGetQuery(con, "SELECT  REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(Municipio, '*', ''), '/', ''), '%', ''), '<', ''), '>', ''),'U','u'),'&',''),'#',''),'!',''),'?',''),'''','') AS Municipio FROM Municipios")
+
+
+## Se seleccionan las otras variables que se consideran importantes y se arma un dataframe en r para los respectivos análisis.
+## Adicionalmente, se pasan las variables categóricas a mayusculas
+MasVariables <- dbGetQuery(con, "SELECT  Superficie,Poblacion, Irural as Rural,Region FROM Municipios")
+
+BaseMunicipios <- data.frame(Departamentos,Municipio, MasVariables)
+BaseMunicipios$Departamento <-  toupper(BaseMunicipios$Departamento)
+BaseMunicipios$Municipio <-  toupper(BaseMunicipios$Municipio)
+BaseMunicipios$Region <-  toupper(BaseMunicipios$Region)
+BaseMunicipios$Departamento <-  trimws(BaseMunicipios$Departamento)
+BaseMunicipios$Municipio <-  trimws(BaseMunicipios$Municipio)
+
+
+```
+
+
+```{r, echo=FALSE,include=FALSE}
+sum(is.na(BaseMunicipios))
+```
+
+
+
+
+La cantidad de registros para la base de municipios es de $`r dim(BaseMunicipios)[1]`$ y cuenta con un total de columnas de $`r dim(BaseMunicipios)[2]`$, donde 3 de ellas son cualitatívas y las otras son numéricas.Además, la base cuenta con por lo menos $`r sum(is.na(BaseMunicipios))`$ registro(s) faltantes(s) en la variable Superficie.
+
+```{r,echo=FALSE}
+sink(tempfile())
+md.pattern(BaseMunicipios, rotate.names = TRUE, plot = TRUE)
+sink() 
+```
+
+
+
+\n
+
+**Descriptivos Variable Población.**
+\n
+
+```{r, echo=FALSE}
+
+BaseMunicipios <- na.omit(BaseMunicipios)
+
+pander(summary(BaseMunicipios$Poblacion))
+```
+\n
+\n
+
+Para la variable de población, los datos revelan una amplia variabilidad, con un rango que va desde 288 hasta 7,592,871 habitantes. La mediana y la media están por encima del tercer cuartil, sugiriendo una distribución sesgada hacia la derecha.
+\n
+\n
+
+**Descriptivos Variable Superficie.**
+```{r, echo=FALSE}
+
+pander(summary(BaseMunicipios$Superficie))
+```
+\n
+\n
+En cuanto a la superficie, también hay una gran variación, con valores que oscilan entre 15.84 y 65,597 km². La mediana es considerablemente menor que el tercer cuartil, lo que indica una distribución sesgada hacia la izquierda.
+\n
+\n
+
+**Descriptivos Variable Rural.**
+```{r, echo=FALSE}
+
+pander(summary(BaseMunicipios$Rural))
+```
+
+
+\n
+\n
+
+Para la variable rural, los valores están más concentrados, con un rango de 0 a 100. La mediana y la media son cercanas, sugiriendo una distribución más simétrica.
+\n
+\n
+
+```{r,echo=FALSE}
+# Obtener la tabla de frecuencias de los departamentos
+tabla_Departamento <- BaseMunicipios %>%
+  group_by(Departamento) %>%
+  summarise(N_Departamento = n()) %>%
+  arrange(desc(N_Departamento))
+
+
+# Graficamos los 10 primeros departamentos con mas información
+tabla_Departamento <- head(tabla_Departamento,10)
+
+
+# Convertir a dataframe
+df_top_10_departamentos <- data.frame(tabla_Departamento)
+
+df_top_10_departamentos <- df_top_10_departamentos %>%
+  mutate(Departamento = factor(Departamento, levels = Departamento[order(-N_Departamento)]))
+
+
+# Graficar
+ggplot(df_top_10_departamentos, aes(x = Departamento, y = N_Departamento)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Top 10 Departamentos con más participación en la información",
+       x = "Departamento",
+       y = "Cantidad de registros") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+Los principles 3 departamentos con mas información son Antioquia, Boyacá y Cundinamarca.
+\n
+\n
+```{r,echo=FALSE}
+
+## Graficos de dispersión
+ggplot(BaseMunicipios, aes(x = Superficie, y = Poblacion)) +
+  geom_point() +
+  labs(title = "Relación entre Superficie y Población")
+
+```
+
+\n
+\n
+Se evidencia una relación positiva en el gráfico de dispersión entre la superficie y la población. En el cual sugiere que entre los municipios con mas superficie tienden a tener mas contidad de habitantes.
+
+
+\n
+\n
+
+```{r,echo=FALSE}
+ggplot(BaseMunicipios, aes(x = Superficie, y = Rural)) +
+  geom_point() +
+  labs(title = "Relación entre Superficie y Población Rural")
+
+```
+
+\n
+\n
+Como acontece en el gráfico anterior a medida que aumente la población Rural, el aumento de la superficie tambien se incrementa.
+\n
+\n
+
+
+### Propuesta de Valor:
+
+Con la información anterior en los gráficos de dispersión, se plantea realizar un modelo para comprobar si la superficie si depende de las poblaciones Rural y la urbana. 
+
+\n
+\n
+* El modelo que estadístico que se propone, de acuerdo a los gráficos de los puntos anteriores es el siguiente:
+
+$$
+  \begin{cases}
+   y_i=\beta_0+\beta_1x_i+\beta_2x_i+\varepsilon_i\\
+   \varepsilon_i\sim N (0,\sigma^2)\\
+   \varepsilon_1,\dotsc, \varepsilon_n \text{ independientes}
+  \end{cases}
+$$
+
+\n
+\n
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+set.seed(123)
+modelo = lm(Superficie~ Rural+Poblacion,data=BaseMunicipios)
+b0=coef(modelo)[1]
+b1=coef(modelo)[2]
+b2=coef(modelo)[3]
+summary(modelo)
+```
+\n
+\n
+
+$\hat{\beta}_0$ Permitiendoce pensar en que la población rural es 0 y los habitantes urbanos por municipio es 0, la superficie de este munucipo equivale a $`r b0`$
+\n
+$\hat{\beta}_1$ por cada unidad adicional en rural, la superficie aumenta en $`r b1`$ unidades manteniendo costante la variable de población.
+\n
+$\hat{\beta}_2$ por cada unidad adicional en la población, la superficie aumenta en $`r b2`$ unidades manteniendo costante la variable de rural.
+\n
+$\hat{\sigma}$ Sugiere que alrededor del 29.44% de la variabilidad está explicada por las variables.
+
+### Validación del Modelo.
+
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+### Datos at�picos del modelo
+
+Leverage.normal <- function(objeto){
+  y <- objeto$residuals + fitted(objeto)
+  H <- lm.influence(objeto)$hat
+  X <- model.matrix(objeto)
+  maxy <- max(max(H),2*mean(H))
+  plot(H, main="Puntos de alto Leverage", xlab="�ndice", ylim=c(0,maxy), ylab="h", cex=0.3, lwd=3)
+  abline(2*mean(H),0,lty=3)
+  alto.leverage=ifelse(H>2*mean(H),TRUE,FALSE)
+  identificador=1:length(y)
+  identificador[alto.leverage]
+}
+Leverage=Leverage.normal(modelo)
+```
+
+```{r,message=FALSE,echo=FALSE, include=FALSE}
+BaseMunicipios[Leverage,]
+```
+Se identifica un total de 56 puntos de alto laverage que indican la presencia de una influencia de desproporcionada en los resultados del modelo propuesto. Estos pueden estar afectando la significancia en los betas del modelo y generar sesgos en la precición del modelo.
+
+
+```{r,echo=FALSE}
+Residuos.normal <- function(objeto){
+  y <- objeto$residuals + fitted(objeto)
+  r <- studres(objeto)
+  maxy <- max(max(r),3)
+  miny <- min(min(r),-3)
+  plot(fitted(objeto), r, main="Observaciones extremas en la respuesta", xlab="Media estimada", ylab="Residuo estudentizado", cex=0.3, lwd=3, ylim=c(miny,maxy))
+  abline(2,0,lty=3)
+  abline(0,0,lty=3)
+  abline(-2,0,lty=3)
+  extremo.respuesta=ifelse(abs(r)>2,TRUE,FALSE)
+  identificador=1:length(y)
+  identificador[extremo.respuesta]
+}
+
+
+Extremos=Residuos.normal(modelo)
+```
+```{r,message=FALSE,echo=FALSE,include=FALSE}
+BaseMunicipios[Extremos,]
+```
+
+
+Se encuentran 26 datos extremos donde tienen un impacto significativo en el modelo y parece ser un valor atípico genuino debido a la gran extención de las ciudades en conparación a las demás del conjunto de datos.
+
+
+
+
+```{r,echo=FALSE}
+Influyentes.normal <- function(objeto){
+  y <- objeto$residuals + fitted(objeto)
+  n <- length(y)
+  h <- lm.influence(objeto)$hat
+  p <- ncol(model.matrix(objeto))
+  s <- sqrt(deviance(objeto)/(n-p))
+  ti <- objeto$residuals/(s*sqrt(1-h))
+  DC <- (ti^2/p) * h/(1-h)
+  maxy <- max(max(DC),3*mean(DC))
+  plot(DC, main="Observaciones influyentes", xlab="�ndice", ylim=c(0,maxy), ylab="Distancia de Cook", cex=0.3, lwd=3)
+  abline(3*mean(DC),0,lty=3)
+  infl.glob=ifelse(DC>3*mean(DC),TRUE,FALSE)
+  identificador=1:length(y)
+  identificador[infl.glob]
+}
+
+Global=Influyentes.normal(modelo)
+```
+```{r,echo=FALSE,include=FALSE}
+BaseMunicipios[Global,]
+```
+Se evidencia la presencia de 3 datosinfluyentes en el modelo, donde se ve afectado los resultados del modelo y la interpretación del mismo.
+
+### Medoramiento del Modelo propuesto.
+
+```{r, echo=FALSE}
+modelo2 <- rlm(Superficie~ Rural+Poblacion,data=BaseMunicipios)
+
+b00=coef(modelo2)[1]
+b11=coef(modelo2)[2]
+b22=coef(modelo2)[3]
+summary(modelo2)
+
+```
+
+```{r,echo=FALSE}
+set.seed(123)
+sample_data <- sample(1:dim(BaseMunicipios)[1], 3) 
+
+
+BasePueba <- BaseMunicipios[sample_data,]
+BasePueba
+
+```
+
+```{r,echo=FALSE}
+
+  
+  
+  
+ResultM1 <- b0 + (b1*BasePueba[1,5]) + (b2*BasePueba[1,4])
+
+ResultM2 <- b00 + (b11*BasePueba[1,5]) + (b22*BasePueba[1,4])
+
+
+
+ResultM1;ResultM2
+```
+```{r}
+b0
+b1
+b2
+
+
+b00
+b11
+b22
+```
+
+
+Segunda información.
+
+
+
+```{r,echo=FALSE}
+
+## Realizar un comparativo entre los dos ultimos años para sacar algunas conclusiones
+
+Prestadores <- dbGetQuery(conP, "SELECT substr(fecha_radicacion, 1, 4) || '-' || substr(fecha_radicacion, 5, 2) AS periodo,clase_persona,
+       clpr_nombre, COUNT(*) AS N 
+FROM Prestadores 
+WHERE fecha_radicacion >= strftime('%Y%m%d', 'now', '-3 years')
+GROUP BY periodo,clase_persona, clpr_nombre;")
+
+Prestadores2022 <- Prestadores %>%
+  filter(periodo %in% c("2022-04","2022-05","2022-06","2022-07","2022-08","2022-09","2022-10","2022-11","2022-12"))
+
+Prestadores2023 <- Prestadores %>%
+  filter(periodo %in% c("2022-04","2023-05","2023-06","2023-07","2023-08","2023-09","2023-10","2023-11","2023-12"))
+
+```
+
+
+
+```{r}
+
+# Extraemos los años 2022 y 2023 para realizar el análisis.
+write_xlsx(Prestadores2022,'E:/Historico/Certificados y Procesos de empleo/PRUEBAS/Adres/2022.xlsx') 
+write_xlsx(Prestadores2023,'E:/Historico/Certificados y Procesos de empleo/PRUEBAS/Adres/2023.xlsx') 
+
+```
+
+
+
+
+```{r}
+
+con <- dbConnect(SQLite(), "Municipios.db")
+conP <- dbConnect(SQLite(), "Prestadores.db")
+dbDisconnect(con)
+dbDisconnect(conP)
+```
+
